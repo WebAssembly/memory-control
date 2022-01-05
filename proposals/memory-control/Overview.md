@@ -16,10 +16,13 @@ At a high level, this proposal aims to introduce the functionality of the instru
  - `memory.protect`: Provide the functionality of `mprotect` with `PROT_READ/PROT_WRITE` permissions, and `VirtualProtect` on Windows with memory protection constants `PAGE_READONLY` and `PAGE_READWRITE`.
  - `memory.discard`: Provide the functionality of `madvise(MADV_DONTNEED)` and `VirtualFree(MEM_DECOMMIT);VirtualAlloc(MEM_COMMIT)` on windows. 
 
-Some options for next steps are outlined below, the details of the instruction semantics will depend on the option that introduces the least overhead of mapping external memory into the Wasm memory space. Both the options below below assume that additional memories apart from the default memory will be available. The current proposal will only introduce `memory.discard` to work on the default memory, the other three instructions will only operate on memory not at index zero. 
+Some options for next steps are outlined below, the instruction semantics will depend on the option. For example each of the instructions above will need an argument for static memory indices or a dynamic memory references. The intent is to pick the option that introduces the least overhead of mapping external memory into the Wasm memory space. Both the options below below assume that additional memories apart from the default memory will be available. The current proposal will only introduce `memory.discard` to work on the default memory, the other three instructions will only operate on memory not at index zero. 
 
 #### Option 1: Statically declared memories, with bind/unbind APIs (preferred)
-Extend the multi-memory proposal with a JS API that enables access to memories other than the default memory
+ - Extend the multi-memory proposal with a JS API that enables access to memories other than the default memory.
+ - The instructions outlined above will take a static argument for memory index. 
+ - Introduce new JS API views to bind/unbind JSArrays that call `memory.map`/`memory.unmap` underneath. (Note: it may be possible for some browser engines to operate on the same backing store without an explicit `map`/`unmap` instruction. If the only usecase for these instructions is from JS, it is possible to make these API only as needed.)
+ - Extend `memtype` to store memory protections in addition to limits for size ranges.
 
 Reasons for preferring this approach: 
  - Having a statically known number of memories ahead of time may be useful for optimizing engine implementations
@@ -27,9 +30,12 @@ Reasons for preferring this approach:
  - Incremental addition over existing proposals
 
 #### Option 2: First class WebAssembly memories
- - Explore adding memoryref, to dynamically bind/unbind memories from instances
- - Introduce a memory table, that stores the indices, base address, and properties of the memory (limited to read/write protections in this proposal, and potentially a growable bit to disable growing where necessary).
-
+This is the more elegant approach to dynamically add memories, but adding support for first class memories is non-trivial.
+ - Introduce the notion of a generic memory ref `ref.mem`.
+ - Introduce a new class of instructions to add, remove and manipulate memory references.
+ - Extend existing instructions that take a `memarg` to use memory references. 
+ - The instructions outlined above will need an argument for a memory reference. 
+ - JS API extensions for the instructions mentioned above.
 
 ### Other alternatives
 
@@ -37,7 +43,7 @@ Reasons for preferring this approach:
  
  - I'm not sure that this can be done in any way that can still be compatible with the performance guarantees for the current memory. At minimum, I expect that more memory accesses would need to be bounds checked, read/write protections would also add extra overhead. 
  - Generalizing what this would need to look like, we need to store granular page level details for the memory which is complicates the engine implementations, especially because engines currently assume that Wasm owns the default memory, and have tricks in place to make this work in a performant and secure way (the use of guard pages for example).
- - To maintain backwards compatibility.
+ - To maintain backwards compatibility to the extent that the default Wasm memory space is unaffected.
 
 #### Web API extensions
 
@@ -56,7 +62,7 @@ Interaction of this proposal with JS is somewhat tricky because
 
  - WebAssembly memory can be exported as an ArrayBuffer or a SharedArrayBuffer if the memory is shared, but ArrayBuffers do not have the notion of read protections for the ArrayBuffer. There are proposals in flight that explore this, and when this is standardized in JS, WebAssembly memory that is read-only either by using a map-for-read mapping or, protected to read only can be exposed to JS. There are currently proposals in flight that explore these restricted ArrayBuffers. ([1](https://github.com/tc39/proposal-limited-arraybuffer), [2](https://github.com/tc39/proposal-readonly-collections))
  - Multiple ArrayBuffers cannot alias the same backing store unless a SharedArrayBuffer is being used. One option would be for the [BufferObject](https://webassembly.github.io/spec/js-api/index.html#memories) to return the reference to the existing JS ArrayBuffer. Alternatively a restriction that could be imposed to only use SharedArrayBuffers when mapping memory, but this also would has trickle down effects into Web APIs. 
- - The multiple memories proposal adds the facility to Wasm to have declare and use multiple memories, but does not expose this in the JS interface. This proposal would need to extend that to be exposed to JS. The most natural API would be to expose each WebAssembly memory as a separate ArrayBuffer. 
+ - Detailed investigation needed into whether growing memory is feasible for memory mapped buffers. What restrictions should be in place when interacting with resizeable/non-resizeable buffers?
 
 ### Open questions
 
@@ -69,3 +75,7 @@ The functions provided above only include Windows 8+ details. Chrome still suppo
 While dynamically adding/removing memories is a key use case, for C/C++/Rust programs operate in a single address space, and library code assumes that it has full access to the single address space, and can access any memory. With multiple memories, we are introducing separate address spaces so it’s not clear what overhead we would be introducing.
 
 Similarly, read-only memory is not easy to differentiate in the current model when all the data is in a single read-write memory. 
+
+#### How does this work in the presence of multiple threads? 
+
+In applications that use multiple threads, what calls are guaranteed to be atomic? On the JS side, what guarantees can we provide for Typed array views?
