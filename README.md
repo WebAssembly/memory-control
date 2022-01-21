@@ -1,4 +1,16 @@
-![Build Status](https://github.com/WebAssembly/spec/actions/workflows/main.yml/badge.svg)
+![Build Status](https://github.com/WebAssembly/<<proposal>>/actions/workflows/main.yml/badge.svg)
+
+# Memory control proposal for WebAssembly
+
+This repository is a clone of [github.com/WebAssembly/spec/](https://github.com/WebAssembly/spec/).
+It is meant for discussion, prototype specification and implementation of a proposal to
+add support for fine grained control of WebAssembly memory.
+
+* See the [overview](proposals/memory-control/Overview.md) for a summary of the proposal.
+
+* See the [modified spec](https://webassembly.github.io/memory-control/) for details.
+
+Original `README` from upstream repository follows.
 
 # spec
 
