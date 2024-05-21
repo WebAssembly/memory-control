@@ -10,40 +10,78 @@ The need for finer grained control of memory has been in the cards since the ear
 
 ### Proposed changes
 
+#### Proposal scope
+
+The proposal is currently scoped to work with a single linear memory, i.e. all of the proposed operations will operate on a single linear memory, and the operations proposed here will only be available as JS API functions. The core spec should have some notion of a “special” mappable memory, but outside of that we will likely not expose any other operations unless there is a consistent way that we can expose them that will be useful to other embeddings. Earlier versions of this proposal exploration included statically declared memories, with bind/unbind APIs, and exploring support for first class memories. Some reasons for scoping the proposal to use a single linear memory are: 
+
+- Ease of portability: Non-trivial addition of work when porting existing applications. A big win for exisiting applications is that porting to Wasm should in most cases work pretty much out of the box, having separate memories will need additional annotations, and only address a smaller set of application use cases
+- Better toolchain integration: While LLVM supports multiple address spaces, most C/C++, Rust programs assume a single linear memory space, and that all pointers are accessible.
+- Graceful degradation for existing applications: This is a requirement for some larger applications, especially when running on older devices where updates aren't always possible - that there would be an easy way to polyfill this proposal. While this isn't a gating requirement, using a secondary memory does make this harder.
+
+Challenges of using a single linear memory:
+
+ - Significant API changes to decouple the current 1:1 mapping for a WebAssembly.Memory object to a JS Memory object.
+ - Potential performance degradation to default memory (however, the goal would be to minimize any effects to the default memory)
+ - Engine implementations are more involved.
+
+#### Proposed API Extensions
+
 At a high level, this proposal aims to introduce the functionality of the instructions below: 
  - `memory.map`: Provide the functionality of `mmap(addr, length, PROT_READ|PROT_WRITE, MAP_FIXED, fd)` on POSIX, and `MapViewOfFile` on Windows with access `FILE_MAP_READ/FILE_MAP_WRITE`.
  - `memory.unmap`: Provide the functionality of POSIX `munmap(addr, length)`, and `UnmapViewOfFile(lpBaseAddress)` on Windows.
  - `memory.protect`: Provide the functionality of `mprotect` with `PROT_READ/PROT_WRITE` permissions, and `VirtualProtect` on Windows with memory protection constants `PAGE_READONLY` and `PAGE_READWRITE`.
- - `memory.discard`: Provide the functionality of `madvise(MADV_DONTNEED)` and `VirtualFree(MEM_DECOMMIT);VirtualAlloc(MEM_COMMIT)` on windows. 
+ - `memory.discard`: Provide the functionality of `madvise(MADV_DONTNEED)` and `VirtualFree(MEM_DECOMMIT);VirtualAlloc(MEM_COMMIT)` on windows.
 
-Some options for next steps are outlined below, the instruction semantics will depend on the option. For example each of the instructions above will need an argument for static memory indices or a dynamic memory references. The intent is to pick the option that introduces the least overhead of mapping external memory into the Wasm memory space. Both the options below below assume that additional memories apart from the default memory will be available. The current proposal will only introduce `memory.discard` to work on the default memory, the other three instructions will only operate on memory not at index zero. 
+Extend the memory descriptor to include a configurable mappable range from the low region of memory. This is the simplest version of the descriptor, extend this to also consider map for read/map for write. 
 
-#### Option 1: Statically declared memories, with bind/unbind APIs (preferred)
- - Extend the multi-memory proposal with a JS API that enables access to memories other than the default memory.
- - The instructions outlined above will take a static argument for memory index. 
- - Introduce new JS API views to bind/unbind JSArrays that call `memory.map`/`memory.unmap` underneath. (Note: it may be possible for some browser engines to operate on the same backing store without an explicit `map`/`unmap` instruction. If the only usecase for these instructions is from JS, it is possible to make these API only as needed.)
- - Extend `memtype` to store memory protections in addition to limits for size ranges.
+```javascript
+dictionary MemoryDescriptor {
+  required [EnforceRange] unsigned long initial;
+  [EnforceRange] unsigned long maximum;
+  boolean shared = false;
+[EnforceRange] unsigned long maplength;
+};
+```
+```html
+<div algorithm>
+    The <dfn constructor for="Memory">Memory(|descriptor|)</dfn> constructor, when invoked, performs the following steps:
+    1. Let |initial| be |descriptor|["initial"].
+    1. If |descriptor|["maximum"] [=map/exists=], let |maximum| be |descriptor|["maximum"]; otherwise, let |maximum| be empty.
+    1. If |maximum| is not empty and |maximum| &lt; |initial|, throw a {{RangeError}} exception.
+    1. Let |shared| be |descriptor|["shared"].
+    1. If |shared| is true and |maximum| is empty, throw a {{TypeError}} exception.
+    1. Let |maplength| be |descriptor|["maplength"].
+    1. If |maximum| is empty and |maplength| is not empty, throw a {{TypeError}} exception.
+    1. If |maplength| is not empty and |maximum| &lt; |maplength|, throw a {{RangeError}} exception.
+    1. Let |memtype| be { min |initial|, max |maximum|, shared |shared|, maplength |maplength| }.
+    1. Let |store| be the [=surrounding agent=]'s [=associated store=].
+    1. Let (|store|, |memaddr|) be [=mem_alloc=](|store|, |memtype|). If allocation fails, throw a {{RangeError}} exception.
+    1. Set the [=surrounding agent=]'s [=associated store=] to |store|.
+    1. [=initialize a memory object|Initialize=] **this** from |memaddr|.
+</div>
+```
+The example below assumes that a buffer exists, and is represented by an ArrayBuffer. memory.map then returns the start address of the mapping of the ArrayBuffer in Wasm memory. The buffer start address would be the beginning of the addresss to be mapped, and then the length of the mapping are used. Throws a runtime error on a failure to map.
 
-Reasons for preferring this approach: 
- - Having a statically known number of memories ahead of time may be useful for optimizing engine implementations
- - From looking at applications, it looks like applications do not require a large number of additional memories, and having a single digit number of extra memories may be sufficient for most cases. (This is a limited survey of applications, if there are more that would benefit from fully first class memories please respond here, or send them my way.)
- - Incremental addition over existing proposals
+The length is currently defined as bytes, but can also be changed to page size. 
 
-#### Option 2: First class WebAssembly memories
-This is the more elegant approach to dynamically add memories, but adding support for first class memories is non-trivial.
- - Introduce the notion of a generic memory ref `ref.mem`.
- - Introduce a new class of instructions to add, remove and manipulate memory references.
- - Extend existing instructions that take a `memarg` to use memory references. 
- - The instructions outlined above will need an argument for a memory reference. 
- - JS API extensions for the instructions mentioned above.
+```javascript
+// Example
 
-### Other alternatives
+var memory = new WebAssembly.Memory({initial = 10, maximum = 150, shared = false, maplength = 15})
 
-#### Why not just map/unmap to the single linear memory, or memory(0)?
- 
- - I'm not sure that this can be done in any way that can still be compatible with the performance guarantees for the current memory. At minimum, I expect that more memory accesses would need to be bounds checked, read/write protections would also add extra overhead. 
- - Generalizing what this would need to look like, we need to store granular page level details for the memory which is complicates the engine implementations, especially because engines currently assume that Wasm owns the default memory, and have tricks in place to make this work in a performant and secure way (the use of guard pages for example).
- - To maintain backwards compatibility to the extent that the default Wasm memory space is unaffected.
+WebAssembly.instantiateStreaming(fetch('memory.wasm'), {js: { memory }})
+  .then(({instance}) => {
+     let mapped_addr = memory.map(buffer,65536);
+     // Do important stuff
+     memory.unmap(buffer);
+ });
+```
+
+##### TODO: memory.map runtime traps, additional details on the different buffer types.
+
+##### TODO: memory.discard & memory.protect APIs
+
+### Alternative approaches
 
 #### Web API extensions
 
@@ -57,25 +95,9 @@ This is summarizing a discussion from the [previous issue](https://github.com/We
 
 Though the proposal is still in phase 1, it is very probable that ArrayBuffers will be passed back and forth between JS/Wasm. Currently this proposal is not making assumptions about functionality that is not already available, and when available will evaluate what overhead it introduces with benchmarks. If at that time the mapping functionality is provided by the GC proposal without much overhead, and it makes sense to introduce a dependency on the GC proposal will be scoped to the other remaining functionality outlined above. 
 
-### JS API story
+### JS API Considerations
 Interaction of this proposal with JS is somewhat tricky because 
 
  - WebAssembly memory can be exported as an ArrayBuffer or a SharedArrayBuffer if the memory is shared, but ArrayBuffers do not have the notion of read protections for the ArrayBuffer. There are proposals in flight that explore this, and when this is standardized in JS, WebAssembly memory that is read-only either by using a map-for-read mapping or, protected to read only can be exposed to JS. There are currently proposals in flight that explore these restricted ArrayBuffers. ([1](https://github.com/tc39/proposal-limited-arraybuffer), [2](https://github.com/tc39/proposal-readonly-collections))
  - Multiple ArrayBuffers cannot alias the same backing store unless a SharedArrayBuffer is being used. One option would be for the [BufferObject](https://webassembly.github.io/spec/js-api/index.html#memories) to return the reference to the existing JS ArrayBuffer. Alternatively a restriction that could be imposed to only use SharedArrayBuffers when mapping memory, but this also would has trickle down effects into Web APIs. 
  - Detailed investigation needed into whether growing memory is feasible for memory mapped buffers. What restrictions should be in place when interacting with resizeable/non-resizeable buffers?
-
-### Open questions
-
-#### Consistent implementation across platforms
-
-The functions provided above only include Windows 8+ details. Chrome still supports Windows 7 for critical security issues, but only until Jan 2023, this proposal for now will only focus on windows system calls available on Windows 8+ for now. Any considerations of older Windows users will depend on usage stats of the interested engines.
-
-#### How would this work in the tools? 
-
-While dynamically adding/removing memories is a key use case, for C/C++/Rust programs operate in a single address space, and library code assumes that it has full access to the single address space, and can access any memory. With multiple memories, we are introducing separate address spaces so it’s not clear what overhead we would be introducing.
-
-Similarly, read-only memory is not easy to differentiate in the current model when all the data is in a single read-write memory. 
-
-#### How does this work in the presence of multiple threads? 
-
-In applications that use multiple threads, what calls are guaranteed to be atomic? On the JS side, what guarantees can we provide for Typed array views?
