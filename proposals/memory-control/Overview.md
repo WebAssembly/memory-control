@@ -140,7 +140,7 @@ Data segments can continue to be used for initializing memory with only one modi
 
 ## Suggested Implementation
 
-The general expectation is that a mappable memory region will act as "reserved", allocating address space in the process but not assigning any physical resources. On Windows, this would be a `VirtualAlloc(MEM_RESERVE)`; on macOS and Linux this would be `mmap(MAP_FIXED, PROT_NONE)` (which works even on systems without overcommit).
+The general expectation is that a mappable memory region will act as "reserved", allocating address space in the process but not assigning any physical resources. On Windows, this would be a `VirtualAlloc(MEM_RESERVE)`; on macOS and Linux this would be `mmap(MAP_FIXED, PROT_NONE)` (which works even on systems without overcommit). Implementations should reserve (but not commit) the entire max memory size when creating a WebAssembly memory.
 
 ### Core instructions
 
