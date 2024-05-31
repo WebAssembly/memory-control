@@ -123,6 +123,7 @@ The following core wasm instructions round out the core spec by providing suppor
 
   Traps if:
   - `size` is less than or equal to zero.
+  - The requested range is out of bounds.
   - The host disallows it for any other reason.
 
 - `memory.protect <memidx> <prot>` (type `[addr:idx size:idx] -> []`)
@@ -136,6 +137,15 @@ The following core wasm instructions round out the core spec by providing suppor
   - The host disallows it for any other reason.
 
 Data segments can continue to be used for initializing memory with only one modification: when applied to a `mappable` memory, an active data segment will first execute `(memory.map <memidx> read (<data offset*>) (idx.const <data length>))`, then the rest of the initialization sequence as usual. `memory.init` would still work as currently specified.
+
+Additionally, the following instruction would be added for non-mappable memory regions:
+
+- `memory.discard <memidx>` (type `[addr:idx size:idx]`)
+
+  "Frees" a range of WebAssembly linear memory by replacing it with zeroes while hinting to the operating system that any physical resources associated with the pages can be released. This is analogous to `madvise(MADV_DONTNEED)` on Linux. This provides a means for controlling the memory footprint of linear memory without introducing any new memory semantics. The address and size will be aligned down and up respectively to the page size.
+
+  Traps if:
+  - The requested range is out of bounds.
 
 
 ## Suggested Implementation
@@ -188,6 +198,16 @@ The disadvantages are that this would require changes to multiple Web APIs acros
 This also only addresses the cost of copies, not the other motivators of this proposal.
 
 This is summarizing a discussion from the [previous issue](https://github.com/WebAssembly/design/issues/1162) in which this approach was discussed in more detail.
+
+#### Lazy commit
+
+If the goal is primarily to allow applications to manage their memory footprint, it may be possible to change the memory allocation strategy for linear memory to commit pages lazily. Currently, the general expectation is that engines will reserve + commit any accessible WebAssembly memory; under this approach, however, the engine would reserve memory only when accessed. This is, essentially, implementing page faults in software.
+
+This strategy could be implemented in a signal handler, with a (presumed) slowdown on page faults. To avoid this slowdown, a new instruction could be provided (e.g. `memory.commit`) to pre-commit pages of memory before they are accessed. This instruction would be a complement to `memory.discard`. In effect, `memory.commit` would be a "soft allocate" and `memory.discard` a "soft free"—providing memory footprint control on most platforms but having no effect on WebAssembly hosts without virtual memory.
+
+This approach may also make the implementation of `memory.discard` more portable for shared memories, since it could be implemented simply as a decommit rather than a re-commit (which is difficult / impossible to implement without the possibility of traps on all platforms).
+
+However, this approach has no impact on the copy-reduction or memory-protection motivators for this proposal.
 
 ### JS API Considerations
 
