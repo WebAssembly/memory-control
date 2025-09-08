@@ -26,7 +26,7 @@ This proposal is in its early stages. As such, we have multiple ideas for featur
 
 - [**Static memory protection**](static-protection.md) (protection): Add optional no-access and read-only sections to the start of WebAssembly memory, allowing common use cases of memory protection (null pointers and read-only data) to be implemented with either hardware memory protection or bounds checks.
 
-- [**`maplength`**](maplength.md) (copies, protection?): Give WebAssembly memories a special region at the start of the address space that is "mappable", enabling special features like mapped files or memory protection. Restricting the special behavior to the start of memory allows the memory to still grow as it did before, and for most of it to be exposed to JS as usual.
+- [**`mappable`**](mappable.md) (copies, protection?): Give WebAssembly memories a special region at the start of the address space that is "mappable", enabling special features like mapped files or memory protection. Restricting the special behavior to the start of memory allows the memory to still grow as it did before, and for most of it to be exposed to JS as usual.
 
 - [**`virtual` mode**](virtual.md) (copies, footprint, protection): Add a new `virtual` mode to WebAssembly memory, which would allow each page of memory to be individually mapped and unmapped. This feature would effectively expose a portable subset of virtual memory APIs on major operating systems (and by extension the actual virtual memory capabilities of the hardware).
 
