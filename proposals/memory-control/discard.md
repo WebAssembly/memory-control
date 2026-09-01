@@ -7,10 +7,14 @@ The `memory.discard` instruction would allow WebAssembly applications to "free" 
 ## Details
 
 ```
-memory.discard $memidx : [addr:idx size:idx] -> []
+memory.discard $memidx : [addr:idx size:idx] -> [i32]
 ```
 
 `memory.discard` "frees" a range of WebAssembly linear memory by replacing it with zeroes while hinting to the operating system that any physical resources associated with the pages can be released. The address and size are specified in bytes, and will be aligned down and up respectively to the page size.
+
+Returns `0` on success, and `-1` on failure, in which case the memory is left entirely unmodified. Unlike `memory.grow`, it is an `i32` for all memories, including 64-bit memories.
+
+The error result allows a host to decline the operation for any reason, for example under scheduling pressure or load from untrusted guests. Without it, such hosts would be forced to zero-fill the range in order to fake the outcome, a more expensive operation than the discard.
 
 Traps if:
 - The requested range is out of bounds.
@@ -30,12 +34,14 @@ SpiderMonkey's prototype is currently using the opcode `0xfc 0x12`.
 ```
 interface Memory {
   // ...
-  undefined discard(
+  boolean discard(
     [EnforceRange] unsigned long addr,
     [EnforceRange] unsigned long size
   );
 }
 ```
+
+`discard` returns `true` if the range was zeroed and `false` if the host declined, throwing a `RangeError` if the range is out of bounds.
 
 
 ## Rationale
